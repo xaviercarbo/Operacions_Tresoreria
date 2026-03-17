@@ -95,36 +95,41 @@ async function intentarLogin() {
   const nomInput = document.getElementById("login-usuari").value.trim();
   const passInput = document.getElementById("login-pass").value.trim();
 
-  if (!estat.dadesGlobals) return alert("Encara carregant dades...");
+  if (!estat.dadesGlobals)
+    return alert("Encara carregant dades del servidor...");
 
-  // 2. Busquem l'usuari a les dades de l'Excel (Comparació Case-Insensitive)
+  // 2. Busquem l'usuari a les dades de l'Excel
   const user = estat.dadesGlobals.usuaris.find((u) => {
-    // Validem que u.Nom existeixi per evitar errors
     const nomExcel = String(u.Nom || "")
       .toLowerCase()
       .trim();
     const nomLogin = nomInput.toLowerCase();
-
-    // La contrasenya normalment la mantenim exacta (Case-Sensitive per seguretat)
     return nomExcel === nomLogin && String(u.Contrasenya || "") === passInput;
   });
 
   if (user) {
-    // ACTUALITZACIÓ DE LES VARIABLES DE SESSIÓ
-    // Guardem l'objecte 'user' tal com ve de l'Excel (manté majúscules originals)
-    estat.usuari = user;
+    // --- MILLORA A: NETEJA DE SEGURETAT ---
+    // Eliminem qualsevol rastre de punts o sessions anteriors del navegador
+    localStorage.removeItem("punts_temporals");
+    // Si guardaves saldos a LocalStorage, neteja'ls aquí també
 
+    // --- MILLORA B: RECÀRREGA DE DADES FRESCA ---
+    // Abans d'entrar, ens assegurem de tenir l'últim "Progress" de Google Sheets
+    // per si l'alumne ha entrat des d'un altre ordinador abans.
+    await carregarDades();
+
+    // 3. ACTUALITZACIÓ DE LES VARIABLES DE SESSIÓ
+    estat.usuari = user;
     usuariSessio = {
-      nom: user.Nom, // Nom original: "Ana", "Xavier", etc.
+      nom: user.Nom,
       punts: parseInt(user.PuntsTotals) || 0,
     };
 
-    // CANVI DE PANTALLA
+    // 4. CANVI DE PANTALLA
     estat.modoActual = "app";
     actualitzarInterficie();
 
-    // ACTUALITZACIÓ DELS DISPLAYS (UI)
-    // Fem servir user.Nom perquè surti exactament com està al Sheet
+    // 5. ACTUALITZACIÓ DELS DISPLAYS (UI)
     if (document.getElementById("nom-usuari-display")) {
       document.getElementById("nom-usuari-display").innerText = user.Nom;
     }
@@ -132,14 +137,14 @@ async function intentarLogin() {
       document.getElementById("punts-total").innerText = usuariSessio.punts;
     }
 
-    // ACTUALITZACIÓ DE LA SECCIÓ DE BENVINGUDA
+    // 6. ACTUALITZACIÓ DE LA SECCIÓ DE BENVINGUDA (UI)
     const welcomeName = document.getElementById("nom-usuari-welcome");
     if (welcomeName) welcomeName.innerText = user.Nom;
 
     const welcomePunts = document.getElementById("punts-display-welcome");
     if (welcomePunts) welcomePunts.innerText = usuariSessio.punts;
 
-    // Comptem l'historial (També fem comparació segura aquí)
+    // Comptem l'historial des de les dades acabades de descarregar
     const welcomeCompletats = document.getElementById(
       "completats-display-welcome",
     );
@@ -164,10 +169,17 @@ async function intentarLogin() {
       welcomeNivell.innerText = nivell;
     }
 
+    // --- MILLORA C: RECONSTRUCCIÓ DE L'ESTAT COMPTABLE ---
+    // Això és vital: com que hem fet carregarDades(), ara reconstruirEstatUsuari
+    // dibuixarà els llibres de caixa/banc exactament com estan al Google Sheet.
+    if (typeof reconstruirEstatUsuari === "function") {
+      reconstruirEstatUsuari();
+    }
+
     // GENEREM EL MENÚ AMB ELS CHECKS VERDS
     generarMenuExercicis();
 
-    console.log("Sessió iniciada correctament per a:", user.Nom);
+    console.log("Sessió iniciada i dades sincronitzades per a:", user.Nom);
   } else {
     alert("Usuari o contrasenya incorrectes");
   }
@@ -458,7 +470,6 @@ function seleccionarExercici(nom) {
 
 function generarMenuExercicis() {
   const menu = document.getElementById("menu-exercicis");
-  // Verifiquem que les dades globals i el menú existeixin
   if (!estat.dadesGlobals || !estat.dadesGlobals.operacions || !menu) return;
 
   const operacions = estat.dadesGlobals.operacions;
@@ -471,12 +482,10 @@ function generarMenuExercicis() {
   llistaExercicis.forEach((nomEx) => {
     const opsDeLExercici = operacions.filter((o) => o.exercici === nomEx);
 
-    // 1. COMPTEM OPERACIONS FETES (Amb validació de seguretat per evitar l'error toString)
+    // 1. COMPTEM OPERACIONS FETES
     const operacionsFetes = opsDeLExercici.filter((op) =>
       progresRealitzat.some((p) => {
-        // Comprovem que p existeixi i tingui les propietats id_op i Usuari
         if (!p || !p.id_op || !op.id_op || !p.Usuari) return false;
-
         return (
           p.Usuari.toString().toLowerCase() ===
             nomUsuari.toString().toLowerCase() &&
@@ -492,10 +501,8 @@ function generarMenuExercicis() {
     const grup = document.createElement("div");
     grup.className = "mb-4";
 
-    // Botó del títol de l'exercici (Carpeta)
     const btnEx = document.createElement("button");
     const safeId = nomEx.replace(/\s+/g, "");
-
     const estilGrup = totLexerciciFet
       ? "bg-emerald-900/40 border border-emerald-500/30"
       : "bg-slate-800/30 hover:bg-slate-800";
@@ -520,7 +527,6 @@ function generarMenuExercicis() {
 
     // 2. CREACIÓ DE CADA SUB-BOTÓ (OPERACIÓ)
     opsDeLExercici.forEach((op, index) => {
-      // Mirem si aquesta operació està a l'historial (Amb validació de seguretat)
       const estaFeta = progresRealitzat.some((p) => {
         if (!p || !p.id_op || !op.id_op || !p.Usuari) return false;
         return (
@@ -544,11 +550,23 @@ function generarMenuExercicis() {
         ${estaFeta ? "<span>✔</span>" : ""}
       `;
 
+      // --- CANVI CRUCIAL AQUÍ ---
       btnOp.onclick = () => {
-        iniciarExercici(nomEx);
+        // A. Definim quin és l'exercici actiu
+        exerciciActual = opsDeLExercici;
         pasActual = index;
+
+        // B. Reconstruïm els llibres basant-nos en el progrés realitzat
+        // Això omplirà les taules de Caixa/Banc amb el que ja estigui validat (✔)
+        if (typeof reconstruirEstatUsuari === "function") {
+          reconstruirEstatUsuari();
+        }
+
+        // C. Actualitzem la interfície
         mostrarPregunta();
         netejarInputs();
+
+        // Tanquem el menú en mòbil
         if (window.innerWidth < 768) toggleMenu();
       };
 
@@ -578,85 +596,94 @@ function tancarSessio() {
 }
 
 function iniciarExercici(nomEx) {
-  const welcome = document.getElementById("benvinguda-app");
+  // 1. GESTIÓ DE VISIBILITAT (Neteja total de la benvinguda)
+  const welcome = document.getElementById("benvinguda-app"); // ID actualitzat
   const zona = document.getElementById("zona-exercici");
+  const zonaBalanc = document.getElementById("zona-balanc");
 
-  if (welcome) welcome.classList.add("hidden");
+  if (welcome) {
+    welcome.style.display = "none"; // Forçat per evitar superposicions
+    welcome.classList.add("hidden");
+  }
+
+  // Mostrem la zona d'exercici per defecte
   if (zona) zona.classList.remove("hidden");
+  if (zonaBalanc) zonaBalanc.classList.add("hidden");
 
-  // 1. Filtrem les operacions de l'exercici triat
+  // 2. FILTRAT D'OPERACIONS
+  if (!estat.dadesGlobals || !estat.dadesGlobals.operacions) return;
+
   exerciciActual = estat.dadesGlobals.operacions.filter(
     (op) => op.exercici === nomEx,
   );
+
   pasActual = 0;
-  resetSaldos();
 
-  // 2. NETEJA DE TAULES (Evitem l'error de 'null')
-  const llistatLlibres = ["caixa", "banc", "clients", "proveidors"];
-  llistatLlibres.forEach((id) => {
-    const el = document.getElementById(`body-${id}`);
-    if (el) el.innerHTML = ""; // Només netegem si l'element existeix
-  });
+  // 3. RECONSTRUCCIÓ DE L'ESTAT (Saldos i Taules)
+  // En lloc de fer resetSaldos() i netejar manualment,
+  // cridem a la nostra funció mestra que ja ho fa tot basant-se en Google Sheets
+  reconstruirEstatUsuari();
 
-  // 4. ACTUALITZACIÓ DE TITOLS I PREGUNTA
+  // 4. ACTUALITZACIÓ DE TÍTOLS
   const titolHeader = document.getElementById("titol-operacio-text");
   if (titolHeader) titolHeader.innerText = nomEx;
 
+  // 5. CARREGAR LA PRIMERA PREGUNTA
   mostrarPregunta();
 
-  // Fem scroll al principi de la zona de treball
+  // 6. UX: Scroll al principi
   const scrollContainer = document.querySelector(".custom-scroll");
   if (scrollContainer) scrollContainer.scrollTop = 0;
+
+  console.log("Iniciant exercici:", nomEx);
 }
 
-// MOSTRAR PREGUNTA (Actualitzat amb colors i terminologia comptable) -----------------------------
+// MOSTRAR PREGUNTA (Actualitzat amb bloqueig de seguretat i gestió de benvinguda)
 function mostrarPregunta() {
-  // 1. Verificació de dades inicial
   if (!exerciciActual || !exerciciActual[pasActual]) return;
 
   const op = exerciciActual[pasActual];
+  const nomUsuari = usuariSessio.nom || "";
 
-  // Normalitzem el text del llibre (majuscules i sense espais) per a la comparació
+  // --- MILLORA 1: GESTIÓ DE LA PANTALLA DE BENVINGUDA ---
+  const seccioBenvinguda = document.getElementById("benvinguda-app");
+  if (seccioBenvinguda) {
+    seccioBenvinguda.style.display = "none";
+    seccioBenvinguda.classList.add("hidden");
+  }
+
+  // --- MILLORA 2: COMPROVACIÓ D'OPERACIÓ JA REALITZADA ---
+  const jaFeta = estat.dadesGlobals.progres.some((p) => {
+    if (!p || !p.id_op || !op.id_op || !p.Usuari) return false;
+    return (
+      p.Usuari.toString().toLowerCase() ===
+        nomUsuari.toString().toLowerCase() &&
+      p.id_op.toString() === op.id_op.toString()
+    );
+  });
+
   const tipusLlibre = (op.llibre || "").toString().toUpperCase().trim();
-
-  // Elements de la interfície
   const zonaExercici = document.getElementById("zona-exercici");
   const zonaBalanc = document.getElementById("zona-balanc");
   const cardPregunta = document.getElementById("card-pregunta");
 
-  // ================================================================
-  // RUTA A: ACTIVITAT DE BALANÇ
-  // ================================================================
-  // Acceptem tant "BALANC" com "BALANÇ"
+  // RUTA A: BALANÇ
   if (tipusLlibre === "BALANC" || tipusLlibre === "BALANÇ") {
-    // Gestió de visibilitat
     if (zonaExercici) zonaExercici.classList.add("hidden");
     if (zonaBalanc) zonaBalanc.classList.remove("hidden");
-
-    // Preparació de dades per al Balanç desglossat
     const dadesBalanc = {
       titol:
         op["Text Descripció Operació"] || "Classifica els comptes al Balanç",
-      // Enviem el concepte a processar (on hi ha els comptes separats per ; i :)
       comptes: processarDadesBalanc(op.concepte),
     };
-
-    // Cridem a la funció que ja gestiona els subgrups (Existències, Realitzable, etc.)
     prepararBalanc(dadesBalanc);
-
-    // Sortim de la funció: no volem carregar selectors de Llibre Diari
     return;
   }
 
-  // ================================================================
-  // RUTA B: ACTIVITAT DE REGISTRE (DIARI / CAIXA / AUXILIARS)
-  // ================================================================
-
-  // Gestió de visibilitat inversa
+  // RUTA B: REGISTRE
   if (zonaBalanc) zonaBalanc.classList.add("hidden");
   if (zonaExercici) zonaExercici.classList.remove("hidden");
 
-  // 1. Actualització de textos i indicadors
   document.getElementById("text-pregunta").innerText =
     op["Text Descripció Operació"] || "Sense descripció";
 
@@ -665,44 +692,71 @@ function mostrarPregunta() {
     indicadorPas.innerText = `PAS ${pasActual + 1} / ${exerciciActual.length}`;
   }
 
-  // 2. Gestió de dates amb memòria
-  if (
-    typeof ultimaDataInformada !== "undefined" &&
-    ultimaDataInformada === ""
-  ) {
-    const avui = new Date();
-    ultimaDataInformada = `${String(avui.getDate()).padStart(2, "0")}/${String(avui.getMonth() + 1).padStart(2, "0")}/${avui.getFullYear()}`;
-  }
+  const btnValidar = document.querySelector("button[onclick='validarPas()']");
+  const inputsFormulari = zonaExercici.querySelectorAll(
+    "input, select, textarea",
+  );
 
+  // --- GESTIÓ DE DATES ACTUALITZADA ---
   const inputDataDoc = document.getElementById("input-data-doc");
   const inputDataVal = document.getElementById("input-data-valor");
-  if (inputDataDoc) inputDataDoc.value = ultimaDataInformada;
-  if (inputDataVal) inputDataVal.value = ultimaDataInformada;
 
-  // 3. Neteja de camps del formulari
-  const campsANetejar = [
-    "input-n-aux",
-    "input-nom-aux",
-    "input-concepte",
-    "input-import",
-  ];
-  campsANetejar.forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.value = "";
-      el.classList.remove("border-rose-500", "bg-rose-50", "border-orange-300");
+  // 1. Pesquem la data bruta (ISO)
+  const dataBruta = op.dataoperacio || op.data_doc || ultimaDataInformada;
+
+  // 2. La netegem amb la teva funció per treure el format 2026-06-01T22:00...
+  const dataNeta = formatarDataEuropea(dataBruta);
+
+  // 3. L'assignem als inputs
+  if (inputDataDoc) inputDataDoc.value = dataNeta;
+  if (inputDataVal) inputDataVal.value = dataNeta;
+
+  // --- BLOQUEIG O ACTIVACIÓ ---
+  if (jaFeta) {
+    mostrarFeedback("Operació ja registrada.", "info");
+    if (btnValidar) {
+      btnValidar.disabled = true;
+      btnValidar.classList.add("opacity-50", "cursor-not-allowed");
+      btnValidar.innerText = "JA REGISTRADA";
     }
-  });
+    inputsFormulari.forEach((el) => (el.disabled = true));
 
-  const efecte = document.getElementById("input-efecte");
-  if (efecte) efecte.value = "-";
+    if (document.getElementById("input-llibre"))
+      document.getElementById("input-llibre").value = op.llibre.toLowerCase();
+    if (document.getElementById("input-import"))
+      document.getElementById("input-import").value = op.import;
+    if (document.getElementById("input-tipus"))
+      document.getElementById("input-tipus").value = op.tipus.toLowerCase();
+    if (document.getElementById("input-concepte"))
+      document.getElementById("input-concepte").value = op.concepte;
+    if (document.getElementById("input-n-aux"))
+      document.getElementById("input-n-aux").value = op.n_aux || "";
+  } else {
+    if (btnValidar) {
+      btnValidar.disabled = false;
+      btnValidar.classList.remove("opacity-50", "cursor-not-allowed");
+      btnValidar.innerText = "VALIDAR OPERACIÓ";
+    }
+    inputsFormulari.forEach((el) => (el.disabled = false));
 
-  // 4. Lògica de Requisits i Selectors
+    ["input-n-aux", "input-nom-aux", "input-concepte", "input-import"].forEach(
+      (id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.value = "";
+          el.classList.remove(
+            "border-rose-500",
+            "bg-rose-50",
+            "border-orange-300",
+          );
+        }
+      },
+    );
+  }
+
+  // Lògica de Requisits Dinàmics (Visuals)
   const selectorLlibre = document.getElementById("input-llibre");
   const selectorTipus = document.getElementById("input-tipus");
-  const labelNAux = document.querySelector("label[for='input-n-aux']");
-  const inputNAux = document.getElementById("input-n-aux");
-
   if (!selectorLlibre || !selectorTipus) return;
 
   const actualitzarRequisits = () => {
@@ -710,7 +764,6 @@ function mostrarPregunta() {
     const optEntrada = selectorTipus.querySelector('option[value="entrada"]');
     const optSortida = selectorTipus.querySelector('option[value="sortida"]');
 
-    // Canvi dinàmic de textos segons el llibre
     if (llibre === "caixa") {
       if (optEntrada) optEntrada.innerText = "Entrada (Cobrament)";
       if (optSortida) optSortida.innerText = "Sortida (Pagament)";
@@ -719,46 +772,11 @@ function mostrarPregunta() {
       if (optSortida) optSortida.innerText = "Haver (Sortida / Augment Passiu)";
     }
 
-    // Prioritat visual de la taula activa
-    const contenidorPare = document.getElementById("taules-operacions");
     const cardLlibre = document.getElementById(`card-${llibre}`);
-    if (contenidorPare && cardLlibre) {
-      contenidorPare.prepend(cardLlibre);
-      cardLlibre.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-
-    // Camps obligatoris per a Auxiliars
-    if (llibre === "clients" || llibre === "proveidors") {
-      if (labelNAux)
-        labelNAux.innerHTML = `Nº Client/Prov <span class="text-rose-600 font-bold">*</span>`;
-      if (inputNAux) {
-        inputNAux.placeholder = "DADA OBLIGATÒRIA";
-        inputNAux.classList.add("border-orange-300");
-      }
-    } else {
-      if (labelNAux) labelNAux.innerHTML = "Nº Client/Prov";
-      if (inputNAux) {
-        inputNAux.placeholder = "Opcional";
-        inputNAux.classList.remove(
-          "border-orange-300",
-          "border-rose-500",
-          "bg-rose-50",
-        );
-      }
-    }
-
-    if (typeof gestionarCampsAuxiliars === "function")
-      gestionarCampsAuxiliars();
+    if (cardLlibre) cardLlibre.parentElement.prepend(cardLlibre);
   };
 
-  // Assignació d'esdeveniments
-  if (inputNAux) {
-    inputNAux.oninput = () =>
-      inputNAux.classList.remove("border-rose-500", "bg-rose-50");
-  }
   selectorLlibre.onchange = actualitzarRequisits;
-
-  // Execució inicial de la lògica de llibres
   actualitzarRequisits();
 
   if (cardPregunta) cardPregunta.classList.remove("hidden");
@@ -847,139 +865,80 @@ function moureLlibreAlDamunt(idLlibre) {
 // --- VALIDACIÓ I REGISTRE AMB ACTUALITZACIÓ DE MENÚ EN TEMPS REAL ---
 async function validarPas() {
   if (!exerciciActual || !exerciciActual[pasActual]) return;
-
   const op = exerciciActual[pasActual];
 
-  // 1. CAPTURA DE DADES DELS INPUTS
-  const inputLlibre = document.getElementById("input-llibre");
-  const inputImport = document.getElementById("input-import");
-  const inputNAux = document.getElementById("input-n-aux");
-  const inputDataDoc = document.getElementById("input-data-doc");
-  const inputDataValor = document.getElementById("input-data-valor");
-
-  const userLlibre = inputLlibre.value;
-  const userImport = parseFloat(inputImport.value);
+  // 1. CAPTURA DE DADES
+  const userLlibre = document.getElementById("input-llibre").value;
+  const userImport = parseFloat(document.getElementById("input-import").value);
   const userTipus = document.getElementById("input-tipus").value;
-  const userNAux = inputNAux.value.trim();
-  const userNomAux =
-    document.getElementById("input-nom-aux").value.trim() || "---";
-  const userEfecte = document.getElementById("input-efecte").value;
-  const userDataDoc = inputDataDoc.value.trim();
-  const userDataValor = inputDataValor.value.trim();
-  const userConcepte = document.getElementById("input-concepte").value.trim();
+  const idOperacioActual = op.id_op;
 
-  // 2. VALIDACIONS D'OBLIGATORIETAT
-  [inputDataDoc, inputDataValor, inputNAux, inputImport].forEach((el) =>
-    el.classList.remove("border-rose-500", "bg-rose-50", "animate-pulse"),
-  );
-
-  if (userDataDoc === "" || userDataValor === "") {
-    const camp = userDataDoc === "" ? inputDataDoc : inputDataValor;
-    camp.classList.add("border-rose-500", "bg-rose-50", "animate-pulse");
-    mostrarFeedback("Error: Les dates són obligatòries.", "error");
-    return;
-  }
-
-  // 3. VALIDACIÓ DE L'EXERCICI (Comparació amb dades de l'Excel)
+  // 2. VALIDACIÓ
   const llibreOK = userLlibre.toLowerCase() === op.llibre.toLowerCase();
   const importOK = Math.abs(userImport - parseFloat(op.import)) < 0.01;
   const tipusOK = userTipus.toLowerCase() === op.tipus.toLowerCase();
 
   if (llibreOK && importOK && tipusOK) {
     // --- L'OPERACIÓ ÉS CORRECTA ---
-    ultimaDataInformada = userDataDoc;
 
-    // A. Lògica Comptable (Caixa, Bancs, Clients, Prov)
-    if (userLlibre === "caixa" || userLlibre === "banc") {
-      if (userTipus === "entrada") {
-        userLlibre === "caixa"
-          ? (estat.saldoCaixa += userImport)
-          : (estat.saldoBanc += userImport);
-      } else {
-        userLlibre === "caixa"
-          ? (estat.saldoCaixa -= userImport)
-          : (estat.saldoBanc -= userImport);
-      }
-      afegirFilaTresoreria(
-        userLlibre,
-        userDataDoc,
-        userConcepte || op.concepte,
-        userImport,
-        userTipus,
-        userLlibre === "caixa" ? estat.saldoCaixa : estat.saldoBanc,
-      );
-    }
+    // A. ACTUALITZACIÓ LOCAL DEL PROGRÉS (Només si no existeix ja)
+    const jaExisteix = estat.dadesGlobals.progres.some(
+      (p) => p.id_op === idOperacioActual && p.Usuari === usuariSessio.nom,
+    );
 
-    if (userLlibre === "clients" || userLlibre === "proveidors") {
-      const codiClau = userNAux;
-      if (!estat.saldosAuxiliars[codiClau]) estat.saldosAuxiliars[codiClau] = 0;
-      if (userLlibre === "clients") {
-        estat.saldosAuxiliars[codiClau] +=
-          userTipus === "entrada" ? userImport : -userImport;
-      } else {
-        estat.saldosAuxiliars[codiClau] +=
-          userTipus === "sortida" ? userImport : -userImport;
-      }
-      afegirFilaAuxiliar(
-        userLlibre,
-        userNAux,
-        userNomAux,
-        userDataValor,
-        userImport,
-        userEfecte,
-        userTipus,
-        estat.saldosAuxiliars[codiClau],
-      );
-      reordenarTaulaAuxiliar(userLlibre);
-    }
-
-    // --- ACCIONS DE GAMIFICACIÓ I SINCRONITZACIÓ AMB ID_OP ---
-
-    const idOperacioActual = op.id_op; // Fem servir l'identificador únic
-
-    // 1. Mostrem la medalla (Popup)
-    mostrarExitGamificat("OPERACIÓ", 10);
-
-    // 2. ACTUALITZACIÓ LOCAL (Immediata): Registrem per id_op
-    if (estat.dadesGlobals && estat.dadesGlobals.progres) {
+    if (!jaExisteix) {
       estat.dadesGlobals.progres.push({
         Usuari: usuariSessio.nom,
         Exercici: op.exercici,
-        id_op: idOperacioActual, // CANVI: Guardem l'ID unívoc
+        id_op: idOperacioActual,
         Punts: 10,
         Data: new Date().toISOString(),
       });
     }
 
-    // 3. ACTUALITZACIÓ DELS COMPTADORS DE BENVINGUDA (UI)
+    // B. RECONSTRUCCIÓ VISUAL (Buidem i pintem amb la nova dada local)
+    reconstruirEstatUsuari();
+
+    // C. GAMIFICACIÓ
+    mostrarExitGamificat("OPERACIÓ", 10);
     usuariSessio.punts += 10;
-    if (document.getElementById("punts-total"))
+    if (document.getElementById("punts-total")) {
       document.getElementById("punts-total").innerText = usuariSessio.punts;
-    if (document.getElementById("punts-display-welcome"))
-      document.getElementById("punts-display-welcome").innerText =
-        usuariSessio.punts;
+    }
 
-    // 4. Tornem a dibuixar el menú lateral (comprovarà els checks ✔ per id_op)
-    generarMenuExercicis();
+    // D. SINCRONITZACIÓ AMB EL SERVIDOR (Google Sheets)
+    // IMPORTANT: Fem servir await per esperar que es desi abans de fer res més
+    try {
+      await registrarProgresAritmetic(10, op.exercici, idOperacioActual);
+    } catch (error) {
+      console.error("Error guardant a Google Sheets:", error);
+    }
 
-    // 5. Enviament al Google Sheet (Backend)
-    // CANVI: Passem l'id_op en lloc del text
-    registrarProgresAritmetic(10, op.exercici, idOperacioActual);
-
-    // 6. Avancem el comptador intern
+    // E. AVANÇAR AL SEGÜENT PAS
     pasActual++;
-    actualitzarSaldosVisuals();
+    generarMenuExercicis(); // Refresquem els tics (✔) del menú lateral
 
-    // Netejar inputs per la següent operació si n'hi ha
+    // F. NETEJA I SEGÜENT PREGUNTA
     setTimeout(() => {
-      if (typeof netejarInputs === "function") netejarInputs();
+      // Neteja manual dels camps de text per seguretat
+      [
+        "input-n-aux",
+        "input-nom-aux",
+        "input-concepte",
+        "input-import",
+      ].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+
+      mostrarPregunta();
     }, 1500);
   } else {
     // Feedback d'error detallat
     let msg = "Error: ";
     if (!llibreOK) msg += "Llibre incorrecte. ";
     if (!importOK) msg += "Import incorrecte. ";
-    if (!tipusOK) msg += "Moviment (Entrada/Sortida) incorrecte. ";
+    if (!tipusOK) msg += "Moviment incorrecte. ";
     mostrarFeedback(msg, "error");
   }
 }
@@ -1024,6 +983,107 @@ function registrarMoviment(llibre, op, imp, data, venc) {
   }
 }
 
+//---- Funció de reconstruir saldos // ----
+function reconstruirEstatUsuari() {
+  // 1. Reiniciem saldos a l'estat inicial per evitar duplicats en sumar
+  estat.saldoCaixa = 0;
+  estat.saldoBanc = 0;
+  estat.saldosAuxiliars = {};
+
+  // 2. Netegem les taules visualment (buidem els <tbody>)
+  const llistatLlibres = ["caixa", "banc", "clients", "proveidors"];
+  llistatLlibres.forEach((id) => {
+    const el = document.getElementById(`body-${id}`);
+    if (el) el.innerHTML = "";
+  });
+
+  // 3. Verificacions de seguretat
+  if (!estat.dadesGlobals || !estat.dadesGlobals.progres || !exerciciActual)
+    return;
+
+  // 4. Filtrem el progrés per l'usuari actual i l'exercici que té obert
+  const nomExActual = exerciciActual[0]?.exercici;
+  const historial = estat.dadesGlobals.progres.filter((p) => {
+    return (
+      p.Usuari.toString().toLowerCase() ===
+        usuariSessio.nom.toString().toLowerCase() && p.Exercici === nomExActual
+    );
+  });
+
+  // 5. Per cada operació trobada al "Progress", busquem els detalls a "Operacions"
+  historial.forEach((fet) => {
+    const opOriginal = estat.dadesGlobals.operacions.find(
+      (o) => o.id_op.toString() === fet.id_op.toString(),
+    );
+
+    if (opOriginal) {
+      const imp = parseFloat(opOriginal.import) || 0;
+      const llibre = (opOriginal.llibre || "").toLowerCase();
+      const tipus = (opOriginal.tipus || "").toLowerCase();
+
+      // --- MILLORA: CAPTURA I FORMAT DE DATA ---
+      // Agafem la columna de l'Excel (ara sense accent) i la passem per la teva funció
+      const dataBruta = opOriginal.dataoperacio || opOriginal.data_doc || "---";
+      const dataNeta = formatarDataEuropea(dataBruta);
+
+      // --- Lògica Tresoreria (Caixa/Banc) ---
+      if (llibre === "caixa" || llibre === "banc") {
+        if (tipus === "entrada") {
+          llibre === "caixa"
+            ? (estat.saldoCaixa += imp)
+            : (estat.saldoBanc += imp);
+        } else {
+          llibre === "caixa"
+            ? (estat.saldoCaixa -= imp)
+            : (estat.saldoBanc -= imp);
+        }
+
+        afegirFilaTresoreria(
+          llibre,
+          dataNeta, // <--- Ja formatejada com DD/MM/AAAA
+          opOriginal.concepte || "Sense concepte",
+          imp,
+          tipus,
+          llibre === "caixa" ? estat.saldoCaixa : estat.saldoBanc,
+        );
+      }
+
+      // --- Lògica Auxiliars (Clients/Proveïdors) ---
+      if (llibre === "clients" || llibre === "proveidors") {
+        const codiClau = opOriginal.n_aux || "S/N";
+
+        if (!estat.saldosAuxiliars[codiClau])
+          estat.saldosAuxiliars[codiClau] = 0;
+
+        if (llibre === "clients") {
+          estat.saldosAuxiliars[codiClau] += tipus === "entrada" ? imp : -imp;
+        } else {
+          estat.saldosAuxiliars[codiClau] += tipus === "sortida" ? imp : -imp;
+        }
+
+        afegirFilaAuxiliar(
+          llibre,
+          codiClau,
+          opOriginal.nom_aux || "---",
+          dataNeta, // <--- Ja formatejada com DD/MM/AAAA
+          imp,
+          opOriginal.efecte || "---",
+          tipus,
+          estat.saldosAuxiliars[codiClau],
+        );
+      }
+    }
+  });
+
+  // 6. Actualitzem els comptadors de la part superior
+  actualitzarSaldosVisuals();
+
+  // 7. Reordenar taules auxiliars
+  if (typeof reordenarTaulaAuxiliar === "function") {
+    reordenarTaulaAuxiliar("clients");
+    reordenarTaulaAuxiliar("proveidors");
+  }
+}
 // --- UTILS DE TAULA ---
 
 function afegirFilaTresoreria(llibre, data, concepte, valor, tipus, saldo) {
@@ -1558,25 +1618,23 @@ async function registrarProgresAritmetic(punts, nomEx, idOp) {
     accio: "actualitzarProgres",
     usuari: usuariSessio.nom,
     exercici: nomEx,
-    id_op: idOp, // CANVI: Ara enviem l'identificador unívoc
+    id_op: idOp,
     punts: punts,
     data: new Date().toLocaleString("ca-ES"),
   };
 
   try {
     // 2. Enviament al Google Sheet (Backend)
+    // Nota: El mode 'no-cors' no permet llegir la resposta, però envia la dada.
     fetch(SHEET_URL, {
       method: "POST",
       mode: "no-cors",
       body: JSON.stringify(dades),
     });
 
-    // --- ACTUALITZACIÓ LOCAL IMMEDIATA (UI) ---
+    // --- ACTUALITZACIÓ DE MARCADORS VISUALS ---
+    // (Els punts ja s'han sumat a validarPas, així que només actualitzem els textos)
 
-    // A. Actualitzem els punts de la sessió
-    usuariSessio.punts += punts;
-
-    // B. Refresquem els marcadors de punts (Navbar i Welcome)
     const marcadorPuntsNav = document.getElementById("punts-total");
     const marcadorPuntsWelcome = document.getElementById(
       "punts-display-welcome",
@@ -1586,30 +1644,21 @@ async function registrarProgresAritmetic(punts, nomEx, idOp) {
     if (marcadorPuntsWelcome)
       marcadorPuntsWelcome.innerText = usuariSessio.punts;
 
-    // C. Afegim l'operació al registre local (id_op) per als checks verds
-    if (estat.dadesGlobals && estat.dadesGlobals.progres) {
-      estat.dadesGlobals.progres.push({
-        Usuari: dades.usuari,
-        Exercici: dades.exercici,
-        id_op: dades.id_op, // CANVI: Guardem l'ID per a la comparació unívoca
-        Punts: punts,
-        Data: dades.data,
-      });
-
-      // D. Actualitzem el comptador de "Tasques Completades" a la pantalla de benvinguda
-      const marcadorTasques = document.getElementById(
-        "completats-display-welcome",
-      );
-      if (marcadorTasques) {
-        const totalFet = estat.dadesGlobals.progres.filter(
-          (p) => p.Usuari.toString() === usuariSessio.nom.toString(),
-        ).length;
-        marcadorTasques.innerText = totalFet;
-      }
-
-      // E. Refresquem el menú lateral (Això posarà el ✔️ verd)
-      generarMenuExercicis();
+    // Actualitzem el comptador de "Tasques Completades"
+    const marcadorTasques = document.getElementById(
+      "completats-display-welcome",
+    );
+    if (marcadorTasques && estat.dadesGlobals.progres) {
+      const totalFet = estat.dadesGlobals.progres.filter(
+        (p) =>
+          p.Usuari.toString().toLowerCase() ===
+          usuariSessio.nom.toString().toLowerCase(),
+      ).length;
+      marcadorTasques.innerText = totalFet;
     }
+
+    // El generarMenuExercicis() i el reconstruirEstatUsuari()
+    // ja es criden des de validarPas(), així que aquí ja no calen.
   } catch (error) {
     console.error("Error en el registre de progrés:", error);
   }
