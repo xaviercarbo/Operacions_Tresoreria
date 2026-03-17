@@ -20,7 +20,7 @@ let ultimaDataInformada = "";
 let usuariSessio = { nom: "Convidat", punts: 0 };
 
 const SHEET_URL =
-  "https://script.google.com/macros/s/AKfycbz9Wkz05-Z4FEdTW3hCYLG9rckZCYWOf4tgvg1maMcr6gpnIR7avg1vtNmYv6f1KfwaTg/exec";
+  "https://script.google.com/macros/s/AKfycbxYWa1mnedjhynK-SgwXNyauwIZX9eC94GnLiQ8tdIZmly32P9A-qFGo-CBBvTLxn0jaQ/exec";
 
 window.onload = () => {
   actualitzarInterficie();
@@ -91,32 +91,40 @@ function formatarDataEuropea(dataBruta) {
 
 // --- GESTIÓ D'ACCÉS (VERSIÓ INTEGRADA AMB DASHBOARD) ---
 async function intentarLogin() {
+  // 1. Captura de valors i neteja d'espais
   const nomInput = document.getElementById("login-usuari").value.trim();
-  const passInput = document.getElementById("login-pass").value;
+  const passInput = document.getElementById("login-pass").value.trim();
 
   if (!estat.dadesGlobals) return alert("Encara carregant dades...");
 
-  // Busquem l'usuari a les dades de l'Excel
-  const user = estat.dadesGlobals.usuaris.find(
-    (u) =>
-      u.Nom.toString() === nomInput && u.Contrasenya.toString() === passInput,
-  );
+  // 2. Busquem l'usuari a les dades de l'Excel (Comparació Case-Insensitive)
+  const user = estat.dadesGlobals.usuaris.find((u) => {
+    // Validem que u.Nom existeixi per evitar errors
+    const nomExcel = String(u.Nom || "")
+      .toLowerCase()
+      .trim();
+    const nomLogin = nomInput.toLowerCase();
+
+    // La contrasenya normalment la mantenim exacta (Case-Sensitive per seguretat)
+    return nomExcel === nomLogin && String(u.Contrasenya || "") === passInput;
+  });
 
   if (user) {
-    // 1. ACTUALITZACIÓ DE LES VARIABLES DE SESSIÓ
+    // ACTUALITZACIÓ DE LES VARIABLES DE SESSIÓ
+    // Guardem l'objecte 'user' tal com ve de l'Excel (manté majúscules originals)
     estat.usuari = user;
 
-    // Crucial per a les crides de registrarProgresAritmetic
     usuariSessio = {
-      nom: user.Nom,
+      nom: user.Nom, // Nom original: "Ana", "Xavier", etc.
       punts: parseInt(user.PuntsTotals) || 0,
     };
 
-    // 2. CANVI DE PANTALLA (De Login a l'App)
+    // CANVI DE PANTALLA
     estat.modoActual = "app";
     actualitzarInterficie();
 
-    // 3. ACTUALITZACIÓ DELS DISPLAYS DE LA NAVBAR (ID clàssics)
+    // ACTUALITZACIÓ DELS DISPLAYS (UI)
+    // Fem servir user.Nom perquè surti exactament com està al Sheet
     if (document.getElementById("nom-usuari-display")) {
       document.getElementById("nom-usuari-display").innerText = user.Nom;
     }
@@ -124,28 +132,29 @@ async function intentarLogin() {
       document.getElementById("punts-total").innerText = usuariSessio.punts;
     }
 
-    // 4. ACTUALITZACIÓ DE LA SECCIÓ DE BENVINGUDA (Targetes noves)
-
-    // A. Nom al Banner
+    // ACTUALITZACIÓ DE LA SECCIÓ DE BENVINGUDA
     const welcomeName = document.getElementById("nom-usuari-welcome");
     if (welcomeName) welcomeName.innerText = user.Nom;
 
-    // B. Punts Totals (Targeta 1)
     const welcomePunts = document.getElementById("punts-display-welcome");
     if (welcomePunts) welcomePunts.innerText = usuariSessio.punts;
 
-    // C. Exercicis Completats (Targeta 2) - Comptem l'historial
+    // Comptem l'historial (També fem comparació segura aquí)
     const welcomeCompletats = document.getElementById(
       "completats-display-welcome",
     );
     if (welcomeCompletats && estat.dadesGlobals.progres) {
-      const totalFet = estat.dadesGlobals.progres.filter(
-        (p) => p.Usuari.toString() === user.Nom.toString(),
-      ).length;
+      const totalFet = estat.dadesGlobals.progres.filter((p) => {
+        return (
+          String(p.Usuari || "")
+            .toLowerCase()
+            .trim() === user.Nom.toLowerCase().trim()
+        );
+      }).length;
       welcomeCompletats.innerText = totalFet;
     }
 
-    // D. Nivell d'Usuari (Targeta 3) - Lògica segons punts
+    // Nivell d'Usuari
     const welcomeNivell = document.getElementById("nivell-display-welcome");
     if (welcomeNivell) {
       let nivell = "Junior";
@@ -155,8 +164,7 @@ async function intentarLogin() {
       welcomeNivell.innerText = nivell;
     }
 
-    // 5. GENEREM EL MENÚ AMB ELS CHECKS VERDS
-    // Ara que tenim l'usuari definit, el menú pintarà els ✔ basant-se en l'historial
+    // GENEREM EL MENÚ AMB ELS CHECKS VERDS
     generarMenuExercicis();
 
     console.log("Sessió iniciada correctament per a:", user.Nom);
