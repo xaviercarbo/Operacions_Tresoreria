@@ -20,7 +20,7 @@ let ultimaDataInformada = "";
 let usuariSessio = { nom: "Convidat", punts: 0 };
 
 const SHEET_URL =
-  "https://script.google.com/macros/s/AKfycbwndYGq_80k5KLZIg1Xek3pXCKbuw0mJrsoGPaar3pzvvJOmrJU6kJYl62mAgpU3yuhjw/exec";
+  "https://script.google.com/macros/s/AKfycbz9Wkz05-Z4FEdTW3hCYLG9rckZCYWOf4tgvg1maMcr6gpnIR7avg1vtNmYv6f1KfwaTg/exec";
 
 window.onload = () => {
   actualitzarInterficie();
@@ -325,11 +325,15 @@ async function executarRegistre() {
   }
 }
 
-// --- Torna al inici APP
+// --- Torna al inici APP (Versió amb Rànquing)
 function tornarIniciApp() {
-  // 1. Amaguem la zona de l'exercici (això farà desaparèixer les taules de sota)
+  // 1. Amaguem la zona de l'exercici i el rànquing
   const zona = document.getElementById("zona-exercici");
   if (zona) zona.classList.add("hidden");
+
+  // AFEGIM AIXÒ: Amagar el rànquing per si estava obert
+  const zonaRanking = document.getElementById("zona-ranking");
+  if (zonaRanking) zonaRanking.classList.add("hidden");
 
   // 2. Mostrem el Dashboard de benvinguda
   const welcome = document.getElementById("benvinguda-app");
@@ -1747,98 +1751,171 @@ function tancarModalExit() {
   }
 }
 
-function obtenirRankingAlumnes() {
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const full = ss.getSheetByName("Usuaris"); // El nom de la teva fulla actual
-    const dades = full.getDataRange().getValues();
+//---- Mostrar Ranking .----
 
-    // Saltem la primera fila (capçaleres)
-    // Columna A (0): Nom | Columna D (3): Grup | Columna E (4): PuntsTotals
-    let ranking = dades.slice(1).map((fila) => {
-      return {
-        nom: fila[0],
-        grup: fila[3],
-        punts: parseInt(fila[4]) || 0,
-      };
+// --- FUNCIONS DEL HALL OF FAME (RÀNQUING) ---
+
+// 1. Variable global per a la memòria cau
+let dadesRanquingCache = null;
+
+// 2. Funció principal (Híbrida: funciona a Google i en Local)
+async function mostrarRankingGlobal(filtreGrup = "Tots") {
+  // Amaguem altres seccions
+  const seccions = [
+    "benvinguda-app",
+    "zona-exercici",
+    "zona-balanc",
+    "zona-calculs-balanc",
+  ];
+  seccions.forEach((id) =>
+    document.getElementById(id)?.classList.add("hidden"),
+  );
+
+  const container = document.getElementById("zona-ranking");
+  if (!container) return;
+  container.classList.remove("hidden");
+
+  // Títol del Header
+  const titolHeader = document.getElementById("titol-operacio-text");
+  if (titolHeader) titolHeader.innerText = "Classificació General";
+
+  // Mostrem loader si no hi ha dades a la memòria cau
+  if (!dadesRanquingCache) {
+    container.innerHTML = `
+            <div class="flex flex-col items-center justify-center p-20 space-y-4">
+                <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                <p class="font-bold text-slate-400 uppercase text-[10px] tracking-widest text-center">Sincronitzant dades...</p>
+            </div>`;
+  }
+
+  try {
+    // --- OBTENCIÓ DE DADES ---
+    if (!dadesRanquingCache) {
+      if (typeof google !== "undefined" && google.script && google.script.run) {
+        // ENTORN GOOGLE: Cridem la funció del servidor
+        await new Promise((resolve) => {
+          google.script.run
+            .withSuccessHandler((data) => {
+              // Si la resposta és l'objecte global, agafem la llista d'usuaris
+              dadesRanquingCache = Array.isArray(data)
+                ? data
+                : data.usuaris || [];
+              resolve();
+            })
+            .obtenirRankingAlumnes();
+        });
+      } else {
+        // ENTORN LOCAL (Live Server): Fem servir fetch
+        const res = await fetch(`${SHEET_URL}?action=obtenirRanquing`);
+        const json = await res.json();
+        // Ens assegurem de guardar una llista (Array)
+        dadesRanquingCache = Array.isArray(json) ? json : json.usuaris || [];
+      }
+    }
+
+    // --- VALIDACIÓ DE SEGURETAT ---
+    // Si per algun motiu dadesRanquingCache no és una llista, la forcem a buida per evitar errors de .filter
+    const llistaFinal = Array.isArray(dadesRanquingCache)
+      ? dadesRanquingCache
+      : [];
+
+    // --- FILTRATGE ---
+    const NOM_A_EXCLOURE = "xavier";
+    let companys = llistaFinal.filter((c) => {
+      if (!c || !c.nom) return false;
+      const nomFila = String(c.nom).toLowerCase().trim();
+      if (nomFila === NOM_A_EXCLOURE) return false;
+      if (filtreGrup !== "Tots") return c.grup === filtreGrup;
+      return true;
     });
 
-    // Ordenem de major a menor puntuació i agafem els 10 primers
-    return ranking.sort((a, b) => b.punts - a.punts).slice(0, 10);
+    // Càlcul de medalles basat en punts únics
+    const puntsUnics = [
+      ...new Set(companys.map((c) => parseInt(c.punts || 0))),
+    ].sort((a, b) => b - a);
+
+    const puntsOr = puntsUnics[0] || -1;
+    const puntsPlata = puntsUnics[1] || -1;
+    const puntsBronze = puntsUnics[2] || -1;
+
+    // --- RENDERITZAT ---
+    const botonsHtml = `
+            <div class="flex flex-col items-center mb-10 animate-in fade-in duration-500">
+                <div class="flex justify-center gap-2 mb-4">
+                    <button onclick="mostrarRankingGlobal('Tots')" class="px-4 py-2 rounded-xl text-[10px] font-black uppercase border ${filtreGrup === "Tots" ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-slate-500 border-slate-100 hover:bg-slate-50"}">Tots</button>
+                    <button onclick="mostrarRankingGlobal('Grup A')" class="px-4 py-2 rounded-xl text-[10px] font-black uppercase border ${filtreGrup === "Grup A" ? "bg-amber-500 text-white border-amber-500 shadow-sm" : "bg-white text-slate-500 border-slate-100 hover:bg-slate-50"}">Grup A</button>
+                    <button onclick="mostrarRankingGlobal('Grup B')" class="px-4 py-2 rounded-xl text-[10px] font-black uppercase border ${filtreGrup === "Grup B" ? "bg-emerald-500 text-white border-emerald-500 shadow-sm" : "bg-white text-slate-500 border-slate-100 hover:bg-slate-50"}">Grup B</button>
+                </div>
+                <button onclick="refrescarDadesRanquing()" class="text-[9px] font-bold text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-all">
+                    🔄 Sincronitzar dades reals
+                </button>
+            </div>`;
+
+    const llistaHtml =
+      companys.length > 0
+        ? companys
+            .map((c, i) => {
+              const p = parseInt(c.punts || 0);
+              let medal = i + 1;
+              let bgClass = "bg-white border-slate-100";
+              let medalClass = "bg-slate-50 text-slate-400 w-10 h-10 text-xs";
+
+              if (p > 0) {
+                if (p === puntsOr) {
+                  medal = "🥇";
+                  bgClass =
+                    "bg-gradient-to-r from-amber-50 to-white border-amber-200";
+                  medalClass = "bg-white shadow-sm w-12 h-12 text-2xl";
+                } else if (p === puntsPlata) {
+                  medal = "🥈";
+                  bgClass =
+                    "bg-gradient-to-r from-slate-50 to-white border-slate-200";
+                  medalClass = "bg-white shadow-sm w-11 h-11 text-xl";
+                } else if (p === puntsBronze) {
+                  medal = "🥉";
+                  bgClass =
+                    "bg-gradient-to-r from-orange-50 to-white border-orange-200";
+                  medalClass = "bg-white shadow-sm w-11 h-11 text-xl";
+                }
+              }
+
+              return `
+            <div class="flex items-center justify-between p-4 rounded-2xl border-2 mb-3 transition-all hover:scale-[1.01] ${bgClass} shadow-sm">
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center justify-center rounded-xl font-black ${medalClass}">${medal}</div>
+                    <div>
+                        <p class="font-black text-slate-800 uppercase text-xs tracking-tight">${c.nom}</p>
+                        <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">${c.grup}</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span class="text-sm font-black text-blue-700 px-3 py-1 bg-white rounded-lg border shadow-sm">${p.toLocaleString()} <span class="text-[8px] ml-0.5">PTS</span></span>
+                </div>
+            </div>`;
+            })
+            .join("")
+        : `<p class="text-center text-slate-400 py-10 italic">No s'han trobat dades per a aquest grup.</p>`;
+
+    container.innerHTML = `
+            <div class="max-w-2xl mx-auto p-4">
+                ${botonsHtml}
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-black text-slate-800 uppercase italic tracking-tighter">Hall of Fame</h2>
+                    <p class="text-[9px] font-bold text-blue-500 uppercase tracking-[0.3em]">Tresoreria 2026</p>
+                </div>
+                <div class="animate-in fade-in slide-in-from-bottom-4 duration-700">${llistaHtml}</div>
+            </div>`;
   } catch (e) {
-    console.error("Error al rànquing: " + e.toString());
-    return [];
+    console.error("Error al rànquing:", e);
+    container.innerHTML = `<div class="p-10 text-center text-red-500 font-bold bg-red-50 rounded-3xl border border-red-100">
+        <p>Error de sincronització</p>
+        <p class="text-[10px] font-normal mt-2">${e.message}</p>
+        <button onclick="refrescarDadesRanquing()" class="mt-4 text-xs underline">Torna-ho a provar</button>
+    </div>`;
   }
 }
 
-function carregarRankingGlobal() {
-  const contenidor = document.getElementById("zona-ranking"); // El teu div principal
-  if (!contenidor) return;
-
-  // Mostrem un loader o text d'espera
-  contenidor.innerHTML = `<p class="text-center animate-pulse">Sincronitzant dades de l'Olimpíada...</p>`;
-
-  google.script.run
-    .withSuccessHandler((ranking) => {
-      if (ranking.length === 0) {
-        contenidor.innerHTML = "<p>Encara no hi ha dades registrades.</p>";
-        return;
-      }
-
-      let html = `
-        <div class="space-y-4 max-w-2xl mx-auto">
-          <h2 class="text-2xl font-black text-center mb-8 uppercase italic tracking-tighter text-slate-800">
-            🏆 Hall of Fame 2026
-          </h2>
-      `;
-
-      ranking.forEach((alumne, index) => {
-        const esTop3 = index < 3;
-        const colorMedalla =
-          index === 0
-            ? "bg-yellow-400"
-            : index === 1
-              ? "bg-slate-300"
-              : "bg-orange-400";
-        const ombra =
-          index === 0
-            ? "shadow-yellow-100 border-yellow-200"
-            : "shadow-slate-100 border-slate-100";
-
-        html += `
-          <div class="flex items-center justify-between p-4 bg-white rounded-3xl border-2 ${ombra} shadow-xl transition-transform hover:scale-[1.02]">
-            <div class="flex items-center gap-4">
-              <div class="w-10 h-10 ${esTop3 ? colorMedalla : "bg-slate-100"} rounded-full flex items-center justify-center font-black text-white shadow-inner">
-                ${index + 1}
-              </div>
-              <div>
-                <p class="font-black text-slate-800 uppercase text-sm">${alumne.nom}</p>
-                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${alumne.grup}</p>
-              </div>
-            </div>
-            <div class="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100">
-              <span class="font-black text-blue-600">${alumne.punts}</span>
-              <span class="text-[9px] font-bold text-slate-400 uppercase ml-1">pts</span>
-            </div>
-          </div>
-        `;
-      });
-
-      html += `</div>`;
-      contenidor.innerHTML = html;
-    })
-    .obtenirRankingAlumnes();
-}
-
-// Al teu selector de menú lateral:
-function mostrarSeccioRanking() {
-  // Amagar la resta de seccions (exercicis, balanç, etc.)
-  document.getElementById("zona-exercicis").classList.add("hidden");
-  document.getElementById("zona-balanc").classList.add("hidden");
-
-  // Mostrar rànquing
-  const seccioRanking = document.getElementById("zona-ranking");
-  seccioRanking.classList.remove("hidden");
-
-  carregarRankingGlobal();
+async function refrescarDadesRanquing() {
+  dadesRanquingCache = null;
+  await mostrarRankingGlobal("Tots");
 }
