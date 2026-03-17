@@ -1,0 +1,68 @@
+/**
+ * GOOGLE APPS SCRIPT - GESTOR DE SIMULADOR COMPTABLE
+ * Versió corregida per evitar l'error setHeader
+ */
+
+function doGet(e) {
+  return generarRespostaCompleta();
+}
+
+function doPost(e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const contingut = JSON.parse(e.postData.contents);
+    
+    if (contingut.accio === "registrarUsuari") {
+      const fullUsuaris = ss.getSheetByName("Usuaris");
+      const dadesUsuaris = fullUsuaris.getDataRange().getValues();
+      const existeix = dadesUsuaris.some(fila => fila[0].toString().toLowerCase() === contingut.nom.toLowerCase());
+      
+      if (!existeix) {
+        fullUsuaris.appendRow([contingut.nom, contingut.pass, contingut.paraula, contingut.grup, 0]);
+        return ContentService.createTextOutput("Usuari registrat").setMimeType(ContentService.MimeType.TEXT);
+      } else {
+        return ContentService.createTextOutput("L'usuari ja existeix").setMimeType(ContentService.MimeType.TEXT);
+      }
+    }
+    
+    // Altres accions...
+    return generarRespostaCompleta();
+  } catch (err) {
+    return ContentService.createTextOutput("Error: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
+  }
+}
+
+function generarRespostaCompleta() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // Assegura't que els noms dels fulls coincideixin exactament amb el teu Excel
+  const dades = {
+    operacions: getSheetData(ss.getSheetByName("Operacions")),
+    usuaris: getSheetData(ss.getSheetByName("Usuaris")),
+    progres: getSheetData(ss.getSheetByName("Progres"))
+  };
+
+  const sortida = JSON.stringify(dades);
+  
+  // ELIMINEM .setHeader() -> Google Apps Script no el suporta així i no cal per CORS en Web Apps
+  return ContentService.createTextOutput(sortida)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getSheetData(sheet) {
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 1) return [];
+  const headers = data[0];
+  return data.slice(1).map(row => {
+    let obj = {};
+    headers.forEach((header, i) => { 
+      let valor = row[i];
+      if (valor instanceof Date) {
+        valor = valor.toISOString().split('T')[0];
+      }
+      obj[header] = valor; 
+    });
+    return obj;
+  });
+}
