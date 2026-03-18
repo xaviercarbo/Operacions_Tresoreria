@@ -1050,10 +1050,22 @@ function reconstruirEstatUsuari() {
 
       // --- Lògica Auxiliars (Clients/Proveïdors) ---
       if (llibre === "clients" || llibre === "proveidors") {
-        const codiClau = opOriginal.n_aux || "S/N";
+        // 1. Capturem les dades usant els noms exactes de la teva captura de l'Excel
+        // Nota: Si a l'Excel posa "nº Cli/Prov", Google Apps Script sol netejar-ho a "nCliProv" o similar.
+        // Prova aquests que són els més probables segons la teva imatge:
+        const codiClau =
+          opOriginal["nº Cli/Prov"] || opOriginal["nCliProv"] || "S/N";
+        const nomComplet =
+          opOriginal["dadeclient/proveidor"] ||
+          opOriginal["dadeclientproveidor"] ||
+          "---";
+        const efecte = opOriginal["efecte"] || "---";
+        const concepteAux = opOriginal["concepte"] || "S/D";
 
-        if (!estat.saldosAuxiliars[codiClau])
+        // 2. Càlcul de saldos (es manté igual)
+        if (!estat.saldosAuxiliars[codiClau]) {
           estat.saldosAuxiliars[codiClau] = 0;
+        }
 
         if (llibre === "clients") {
           estat.saldosAuxiliars[codiClau] += tipus === "entrada" ? imp : -imp;
@@ -1061,15 +1073,17 @@ function reconstruirEstatUsuari() {
           estat.saldosAuxiliars[codiClau] += tipus === "sortida" ? imp : -imp;
         }
 
+        // 3. Passem la informació neta a la funció de pintar
         afegirFilaAuxiliar(
           llibre,
           codiClau,
-          opOriginal.nom_aux || "---",
-          dataNeta, // <--- Ja formatejada com DD/MM/AAAA
+          nomComplet,
+          dataNeta, // Data que ja hem netejat abans
           imp,
-          opOriginal.efecte || "---",
+          efecte,
           tipus,
           estat.saldosAuxiliars[codiClau],
+          concepteAux,
         );
       }
     }
@@ -1127,6 +1141,7 @@ function afegirFilaAuxiliar(
   efecte,
   tipus,
   saldoFinal,
+  concepte, // <--- Nou paràmetre rebut des de reconstruirEstatUsuari
 ) {
   const tbody = document.getElementById(`body-${llibre}`);
   if (!tbody) return;
@@ -1135,13 +1150,14 @@ function afegirFilaAuxiliar(
   let deure = "0.00";
   let haver = "0.00";
 
+  // Lògica segons el tipus de llibre
   if (llibre === "clients") {
-    // Clients: Deure (entrada de deute) / Haver (cobrament/sortida de deute)
+    // Clients: Entrada (Deure) / Sortida (Haver)
     tipus === "entrada"
       ? (deure = importVal.toFixed(2))
       : (haver = importVal.toFixed(2));
   } else {
-    // Proveïdors: Haver (sortida/augment deute) / Deure (pagament/entrada)
+    // Proveïdors: Sortida (Haver) / Entrada (Deure)
     tipus === "sortida"
       ? (haver = importVal.toFixed(2))
       : (deure = importVal.toFixed(2));
@@ -1156,24 +1172,27 @@ function afegirFilaAuxiliar(
       ? (sDeutor = saldoFinal.toFixed(2))
       : (sCreditor = Math.abs(saldoFinal).toFixed(2));
   } else {
-    // Proveïdors: El saldo habitual és Creditor
     saldoFinal >= 0
       ? (sCreditor = saldoFinal.toFixed(2))
       : (sDeutor = Math.abs(saldoFinal).toFixed(2));
   }
 
-  // 3. GENERAR LA FILA AMB EL COLOR BLAU A L'HAVER
+  // 3. GENERAR LA FILA (Usant dataV per a les dues columnes de data per coherència)
   const row = `
-    <tr class="hover:bg-slate-50 transition-colors" data-codi="${nAux}">
-      <td class="p-4 text-slate-500">${ultimaDataInformada}</td>
-      <td class="p-4 ${llibre === "clients" ? "text-blue-600" : "text-purple-600"}">${dataV}</td>
-      <td class="p-4 font-mono font-bold">${nAux}</td>
-      <td class="p-4 text-slate-700">${nomAux}</td>
-      <td class="p-4 text-center"><span class="px-2 py-1 bg-slate-100 rounded text-[10px]">${efecte}</span></td>
-      <td class="p-4 text-slate-500 italic">${exerciciActual[pasActual]?.["Concepte"] || "S/D"}</td>
-      <td class="p-4 text-right font-medium">${deure}</td>
-      <td class="p-4 text-right font-medium text-blue-600">${haver}</td> <td class="p-4 text-right font-black text-slate-800">${sDeutor}</td>
-      <td class="p-4 text-right font-black text-blue-800">${sCreditor}</td> </tr>`;
+    <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100" data-codi="${nAux}">
+      <td class="p-4 text-slate-500 text-sm">${dataV}</td>
+      <td class="p-4 text-sm ${llibre === "clients" ? "text-blue-600" : "text-purple-600"}">${dataV}</td>
+      <td class="p-4 font-mono font-bold text-sm">${nAux}</td>
+      <td class="p-4 text-slate-700 text-sm">${nomAux}</td>
+      <td class="p-4 text-center">
+        <span class="px-2 py-1 bg-slate-100 rounded text-[10px] uppercase font-bold">${efecte}</span>
+      </td>
+      <td class="p-4 text-slate-500 italic text-sm">${concepte || "S/D"}</td>
+      <td class="p-4 text-right font-medium text-sm">${deure}</td>
+      <td class="p-4 text-right font-medium text-sm text-blue-600">${haver}</td>
+      <td class="p-4 text-right font-black text-sm text-slate-800">${sDeutor}</td>
+      <td class="p-4 text-right font-black text-sm text-blue-800">${sCreditor}</td>
+    </tr>`;
 
   tbody.insertAdjacentHTML("beforeend", row);
 }
